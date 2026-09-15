@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>Trivia Night</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="phone">
+  <header class="topbar phone-top">
+    <span id="phone-name" class="team-name">Join the game</span>
+    <span id="phone-score" class="team-score">0</span>
+  </header>
+
+  <main id="screen">
+    <section id="screen-join" class="screen active">
+      <h2>Join the game</h2>
+      <input id="join-name" type="text" placeholder="Your team name" maxlength="30" autocomplete="off" autocapitalize="words">
+      <button id="join-btn" class="big">Join</button>
+    </section>
+
+    <section id="screen-waiting" class="screen">
+      <div id="waiting-text" class="status-text">Waiting for the host to start…</div>
+    </section>
+
+    <section id="screen-buzz" class="screen">
+      <div id="buzz-position" class="status-text"></div>
+      <button id="buzz-btn" class="big buzz">BUZZ!</button>
+    </section>
+
+    <section id="screen-answer" class="screen">
+      <img id="phone-q-img" class="q-img small hidden" alt="">
+      <div id="answer-timer" class="countdown"></div>
+      <div id="answer-status" class="status-text">Pick your answer!</div>
+      <div class="answer-grid">
+        <button class="answer-btn" data-idx="0"><span class="btn-letter">A</span><span class="btn-text"></span></button>
+        <button class="answer-btn" data-idx="1"><span class="btn-letter">B</span><span class="btn-text"></span></button>
+        <button class="answer-btn" data-idx="2"><span class="btn-letter">C</span><span class="btn-text"></span></button>
+        <button class="answer-btn" data-idx="3"><span class="btn-letter">D</span><span class="btn-text"></span></button>
+      </div>
+    </section>
+
+    <section id="screen-result" class="screen">
+      <div id="result-text" class="result-text"></div>
+    </section>
+
+    <section id="screen-finished" class="screen">
+      <div class="result-text">Game over!</div>
+    </section>
+  </main>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="phone.js"></script>
+</body>
+</html>
