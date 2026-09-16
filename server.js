@@ -75,7 +75,12 @@ function getLanIp() {
 }
 
 const PORT = process.env.PORT || 3000;
-const joinUrl = () => `http://${getLanIp()}:${PORT}`;
+const joinUrl = () => {
+  if (process.env.RENDER_EXTERNAL_URL) return process.env.RENDER_EXTERNAL_URL;
+  if (process.env.RAILWAY_STATIC_URL) return process.env.RAILWAY_STATIC_URL;
+  if (process.env.DEPLOYED_URL) return process.env.DEPLOYED_URL;
+  return `http://${getLanIp()}:${PORT}`;
+};
 
 let configCache = null;
 app.get('/config', async (req, res) => {
