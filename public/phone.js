@@ -52,7 +52,7 @@ function tryRestore() {
     } else {
       clearSaved();
       $('join-name').value = saved.name || '';
-      $('phone-name').textContent = 'Join the game';
+      $('phone-name').textContent = 'Entre no jogo';
     }
   });
 }
@@ -84,7 +84,7 @@ document.querySelectorAll('.answer-btn').forEach((btn) => {
   btn.onclick = () => {
     if (btn.classList.contains('disabled')) return;
     btn.classList.add('disabled', 'chosen');
-    $('answer-status').textContent = 'Locked in!';
+    $('answer-status').textContent = 'Travado!';
     socket.emit('phone:answer', Number(btn.dataset.idx));
   };
 });
@@ -152,11 +152,11 @@ function render(game) {
           if (locked) b.classList.add('disabled');
           else b.classList.remove('disabled');
         });
-        $('answer-status').textContent = locked ? 'Locked in!' : 'Pick your answer!';
+        $('answer-status').textContent = locked ? 'Travado!' : 'Escolha sua resposta!';
         show('screen-answer');
       } else if (queuePos !== -1) {
         clearCountdown();
-        $('buzz-position').textContent = `#${queuePos + 1} in line — wait…`;
+        $('buzz-position').textContent = `#${queuePos + 1} na fila — aguarde…`;
         $('buzz-btn').classList.add('disabled');
         show('screen-buzz');
       } else {
@@ -172,10 +172,10 @@ function render(game) {
       const correct = game.question.correct;
       if (game.pickedTeam === meId) {
         const right = game.answerChosen === correct;
-        $('result-text').textContent = right ? 'CORRECT! +100' : 'Wrong answer!';
+        $('result-text').textContent = right ? 'CORRETO! +100' : 'Resposta errada!';
         $('result-text').className = 'result-text ' + (right ? 'ok-text' : 'no-text');
       } else {
-        $('result-text').textContent = `The answer was ${LETTERS[correct]}`;
+        $('result-text').textContent = `A resposta era ${LETTERS[correct]}`;
         $('result-text').className = 'result-text';
       }
       show('screen-result');

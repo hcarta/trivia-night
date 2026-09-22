@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Trivia Night — Host</title>
+  <title>Noite de Trivia — Apresentador</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body class="host">
@@ -19,37 +19,37 @@
     <section id="welcome" class="welcome hidden">
       <div class="welcome-inner">
         <h1>TRIVIA NIGHT</h1>
-        <p class="welcome-sub">Scan with your phone to join</p>
-        <img id="qr-img" alt="Join QR code">
+        <p class="welcome-sub">Escaneie com o celular para participar</p>
+        <img id="qr-img" alt="QR code para participar">
         <div id="join-url" class="join-url"></div>
-        <button id="welcome-start-btn" class="big">Start Game</button>
-        <h2 class="teams-title">Teams</h2>
+        <button id="welcome-start-btn" class="big">Iniciar Jogo</button>
+        <h2 class="teams-title">Equipes</h2>
         <div id="welcome-teams" class="welcome-teams"></div>
       </div>
     </section>
 
     <div id="game-grid" class="grid hidden">
       <section class="panel qpanel">
-        <div id="phase-badge" class="phase">IDLE</div>
+        <div id="phase-badge" class="phase">AGUARDANDO</div>
         <img id="q-img" class="q-img hidden" alt="">
-        <div id="question-text" class="question">Press "Next Question" to begin</div>
+        <div id="question-text" class="question">Pressione "Próxima Pergunta" para começar</div>
         <ol id="answers" class="answers"></ol>
         <div id="reveal-box" class="reveal hidden"></div>
       </section>
 
       <aside class="side">
         <section class="panel">
-          <h2>Answer</h2>
+          <h2>Resposta</h2>
           <div id="answer-countdown" class="countdown hidden"></div>
           <div id="game-status" class="buzz-list"></div>
           <div id="buzz-queue" class="buzz-queue"></div>
         </section>
 
         <section class="panel controls">
-          <button id="start-btn" class="big">Next Question</button>
-          <button id="confirm-btn" class="big amber hidden">Confirm Answer</button>
+          <button id="start-btn" class="big">Próxima Pergunta</button>
+          <button id="confirm-btn" class="big amber hidden">Confirmar Resposta</button>
           <button id="results-btn" class="big amber hidden">Resultados</button>
-          <button id="restart-btn" class="big danger">Restart Game</button>
+          <button id="restart-btn" class="big danger">Reiniciar Jogo</button>
         </section>
       </aside>
     </div>
@@ -59,7 +59,7 @@
     <div class="modal">
       <h1>RESULTADOS</h1>
       <ol id="ranking-list" class="ranking-list"></ol>
-      <button id="close-results" class="big">Close</button>
+      <button id="close-results" class="big">Fechar</button>
     </div>
   </div>
 

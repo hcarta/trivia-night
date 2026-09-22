@@ -30,7 +30,7 @@ els.startBtn.onclick = () => socket.emit('host:start');
 els.welcomeStartBtn.onclick = () => socket.emit('host:start');
 els.confirmBtn.onclick = () => socket.emit('host:confirm');
 els.restartBtn.onclick = () => {
-  if (confirm('Restart the trivia?\nScores reset to 0 and you return to the welcome screen. Teams stay connected.')) {
+  if (confirm('Reiniciar a trivia?\nAs pontuações voltam a 0 e você volta para a tela de boas-vindas. As equipes permanecem conectadas.')) {
     socket.emit('host:restart');
   }
 };
@@ -108,7 +108,7 @@ function render(game) {
           </div>`
         )
         .join('')
-    : '<div class="hint">Waiting for teams to join…</div>';
+    : '<div class="hint">Aguardando equipes se juntarem…</div>';
 
   if (isWelcome) {
     els.welcomeTeams.innerHTML = game.teams.length
@@ -118,10 +118,10 @@ function render(game) {
               `<div class="team-line ${t.online ? '' : 'offline'}">${esc(t.name)}${t.online ? '' : ' <span class="offline-tag">offline</span>'}</div>`
           )
           .join('')
-      : '<div class="hint">Waiting for teams — scanning the QR code joins the game</div>';
+      : '<div class="hint">Aguardando equipes — escaneie o QR code para participar</div>';
     els.startBtn.textContent = game.teams.length
-      ? `Start Game (${game.teams.length} team${game.teams.length > 1 ? 's' : ''})`
-      : 'Start Game';
+      ? `Iniciar Jogo (${game.teams.length} equipe${game.teams.length > 1 ? 's' : ''})`
+      : 'Iniciar Jogo';
     return;
   }
 
@@ -130,22 +130,22 @@ function render(game) {
 
   els.progress.textContent =
     game.questionIndex >= 0
-      ? `Question ${game.questionIndex + 1} / ${game.questionCount}`
+      ? `Pergunta ${game.questionIndex + 1} / ${game.questionCount}`
       : '';
 
   if (!question) {
-    els.question.textContent = 'Press "Next Question" to begin';
+    els.question.textContent = 'Pressione "Próxima Pergunta" para começar';
     els.qimg.classList.add('hidden');
     els.answers.innerHTML = '';
     els.reveal.classList.add('hidden');
-    els.status.innerHTML = '<div class="hint">Waiting to start</div>';
+    els.status.innerHTML = '<div class="hint">Aguardando iniciar</div>';
     els.buzzQueue.innerHTML = '';
     clearHostCountdown();
     els.countdown.classList.add('hidden');
     els.confirmBtn.classList.add('hidden');
     els.resultsBtn.classList.add('hidden');
     els.startBtn.classList.remove('hidden');
-    els.startBtn.textContent = 'Next Question';
+    els.startBtn.textContent = 'Próxima Pergunta';
     return;
   }
 
@@ -176,12 +176,12 @@ function render(game) {
     els.reveal.classList.remove('hidden');
     if (game.answerChosen != null) {
       const right = game.answerChosen === question.correct;
-      els.reveal.innerHTML = `<strong>${esc(picked ? picked.name : 'Team')}</strong> chose <strong>${LETTERS[game.answerChosen]}</strong> — ${
-        right ? 'CORRECT! +100' : 'Wrong answer'
-      } · Correct: ${LETTERS[question.correct]}`;
+      els.reveal.innerHTML = `<strong>${esc(picked ? picked.name : 'Equipe')}</strong> escolheu <strong>${LETTERS[game.answerChosen]}</strong> — ${
+        right ? 'CORRETO! +100' : 'Resposta errada'
+      } · Correto: ${LETTERS[question.correct]}`;
       els.reveal.className = 'reveal ' + (right ? 'ok-box' : 'no-box');
     } else {
-      els.reveal.innerHTML = 'No answer was given.';
+      els.reveal.innerHTML = 'Nenhuma resposta foi dada.';
       els.reveal.className = 'reveal';
     }
   } else {
@@ -194,33 +194,33 @@ function render(game) {
     startHostCountdown(game.answerEndsAt);
   }
 
-  const pickedName = picked ? picked.name : 'Team';
+  const pickedName = picked ? picked.name : 'Equipe';
   if (game.phase === 'buzzing') {
-    els.status.innerHTML = '<div class="hint">Waiting for a team to buzz in…</div>';
+    els.status.innerHTML = '<div class="hint">Aguardando uma equipe apertar…</div>';
     els.buzzQueue.innerHTML = '';
   } else if (game.phase === 'answering') {
-    els.status.innerHTML = `<div class="hint"><strong>${esc(pickedName)}</strong> is answering…${
-      game.answerChosen != null ? ` chose ${LETTERS[game.answerChosen]}` : ''
+    els.status.innerHTML = `<div class="hint"><strong>${esc(pickedName)}</strong> está respondendo…${
+      game.answerChosen != null ? ` escolheu ${LETTERS[game.answerChosen]}` : ''
     }</div>`;
     if (game.buzzQueue.length > 1) {
       els.buzzQueue.innerHTML = game.buzzQueue
         .slice(1)
         .map((tid, i) => {
           const t = game.teams.find((t) => t.id === tid);
-          return `<div class="queue-item">#${i + 2} — ${esc(t ? t.name : 'Team')}</div>`;
+          return `<div class="queue-item">#${i + 2} — ${esc(t ? t.name : 'Equipe')}</div>`;
         })
         .join('');
     } else {
       els.buzzQueue.innerHTML = '';
     }
   } else if (game.phase === 'revealed') {
-    els.status.innerHTML = '<div class="hint">Answer confirmed</div>';
+    els.status.innerHTML = '<div class="hint">Resposta confirmada</div>';
     els.buzzQueue.innerHTML = '';
   } else if (game.phase === 'finished') {
-    els.status.innerHTML = '<div class="hint">All questions done!</div>';
+    els.status.innerHTML = '<div class="hint">Todas as perguntas respondidas!</div>';
     els.buzzQueue.innerHTML = '';
   } else {
-    els.status.innerHTML = '<div class="hint">Waiting to start</div>';
+    els.status.innerHTML = '<div class="hint">Aguardando iniciar</div>';
     els.buzzQueue.innerHTML = '';
   }
 
@@ -234,7 +234,7 @@ function render(game) {
     els.startBtn.classList.add('hidden');
   } else {
     els.startBtn.classList.remove('hidden');
-    els.startBtn.textContent = hasMore ? 'Next Question' : 'Finish';
+    els.startBtn.textContent = hasMore ? 'Próxima Pergunta' : 'Finalizar';
   }
 
   renderRanking(game.teams);

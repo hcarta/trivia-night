@@ -98,8 +98,9 @@ app.get('/config', async (req, res) => {
 });
 
 const POINTS = 100;
+const PENALTY = 20;
 const GRACE_MS = 300000;
-const ANSWER_MS = 10000;
+const ANSWER_MS = 5000;
 
 const state = {
   teams: new Map(),
@@ -285,6 +286,7 @@ io.on('connection', (socket) => {
     const q = currentQuestion();
     const t = state.pickedTeam ? state.teams.get(state.pickedTeam) : null;
     if (q && t && state.answerChosen === q.correct) t.score += POINTS;
+    else if (q && t && state.answerChosen != null) t.score = Math.max(0, t.score - PENALTY);
     state.phase = 'revealed';
     state.buzzQueue = [];
     broadcast();
