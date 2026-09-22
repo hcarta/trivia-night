@@ -60,13 +60,24 @@ function parseCSV(str) {
 }
 
 const rawRows = parseCSV(fs.readFileSync(path.join(__dirname, 'questions.csv'), 'utf8').replace(/^\uFEFF/, ''));
-const questions = rawRows.slice(1).map((r) => ({
-  category: r[0] || 'Geral',
-  question: r[1],
-  answers: [r[2], r[3], r[4], r[5]],
-  correct: Number(r[6]),
-  image: (r[7] || '').trim() || null,
-}));
+function shuffle(arr) {
+  // Fisher–Yates: embaralha no lugar
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+let questions = shuffle(
+  rawRows.slice(1).map((r) => ({
+    category: r[0] || 'Geral',
+    question: r[1],
+    answers: [r[2], r[3], r[4], r[5]],
+    correct: Number(r[6]),
+    image: (r[7] || '').trim() || null,
+  }))
+);
 
 function getLanIp() {
   const nets = os.networkInterfaces();
@@ -305,6 +316,8 @@ io.on('connection', (socket) => {
     state.buzzQueue = [];
     state.chanced.clear();
     for (const team of state.teams.values()) team.score = 0;
+    // nova partida = nova ordem de perguntas
+    shuffle(questions);
     broadcast();
   });
 
