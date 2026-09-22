@@ -30,7 +30,7 @@ els.startBtn.onclick = () => socket.emit('host:start');
 els.welcomeStartBtn.onclick = () => socket.emit('host:start');
 els.confirmBtn.onclick = () => socket.emit('host:confirm');
 els.restartBtn.onclick = () => {
-  if (confirm('Reiniciar a trivia?\nAs pontuações voltam a 0 e você volta para a tela de boas-vindas. As equipes permanecem conectadas.')) {
+  if (confirm('Reiniciar a Revisão!?\nAs pontuações voltam a 0 e você volta para a tela de boas-vindas. As equipes permanecem conectadas.')) {
     socket.emit('host:restart');
   }
 };
@@ -49,6 +49,15 @@ fetch('/config')
   });
 
 const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F'];
+
+// Rótulos em português para as fases exibidas no badge do apresentador.
+const PHASE_LABELS = {
+  idle: 'AGUARDANDO',
+  buzzing: 'EM DISPUTA',
+  answering: 'RESPONDENDO',
+  revealed: 'RESPOSTA REVELADA',
+  finished: 'FIM DE JOGO',
+};
 
 function esc(s) {
   const div = document.createElement('div');
@@ -104,7 +113,7 @@ function render(game) {
             <span class="rank">${i + 1}</span>
             <span class="tname">${esc(t.name)}</span>
             <span class="tscore">${t.score}</span>
-            ${t.online ? '' : '<span class="offline-tag">offline</span>'}
+            ${t.online ? '' : '<span class="offline-tag">desconectada</span>'}
           </div>`
         )
         .join('')
@@ -115,7 +124,7 @@ function render(game) {
       ? game.teams
           .map(
             (t) =>
-              `<div class="team-line ${t.online ? '' : 'offline'}">${esc(t.name)}${t.online ? '' : ' <span class="offline-tag">offline</span>'}</div>`
+              `<div class="team-line ${t.online ? '' : 'offline'}">${esc(t.name)}${t.online ? '' : ' <span class="offline-tag">desconectada</span>'}</div>`
           )
           .join('')
       : '<div class="hint">Aguardando equipes — escaneie o QR code para participar</div>';
@@ -149,7 +158,7 @@ function render(game) {
     return;
   }
 
-  els.phase.textContent = `${(question.category || 'TRIVIA').toUpperCase()} · ${game.phase.toUpperCase()}`;
+  els.phase.textContent = `${(question.category || 'Geral').toUpperCase()} · ${PHASE_LABELS[game.phase] || String(game.phase).toUpperCase()}`;
   els.question.textContent = question.question;
   if (question.image) {
     els.qimg.src = question.image;

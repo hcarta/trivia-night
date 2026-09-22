@@ -12,9 +12,13 @@ const server = http.createServer(app);
 const io = new Server(server);
 
 app.use(express.static(path.join(__dirname, 'public')));
+app.use('/images', express.static(path.join(__dirname, 'images')));
 app.get('/host', (req, res) => res.sendFile(path.join(__dirname, 'public', 'host.html')));
 
 function parseCSV(str) {
+  // Auto-detect delimiter: use the first line to choose between ';' and ','.
+  const firstLine = str.slice(0, str.indexOf('\n') === -1 ? str.length : str.indexOf('\n'));
+  const delimiter = (firstLine.split(';').length > firstLine.split(',').length) ? ';' : ',';
   const rows = [];
   let row = [];
   let field = '';
@@ -34,7 +38,7 @@ function parseCSV(str) {
       }
     } else if (c === '"') {
       inQuotes = true;
-    } else if (c === ',') {
+    } else if (c === delimiter) {
       row.push(field);
       field = '';
     } else if (c === '\n' || c === '\r') {
@@ -57,7 +61,7 @@ function parseCSV(str) {
 
 const rawRows = parseCSV(fs.readFileSync(path.join(__dirname, 'questions.csv'), 'utf8').replace(/^\uFEFF/, ''));
 const questions = rawRows.slice(1).map((r) => ({
-  category: r[0] || 'General',
+  category: r[0] || 'Geral',
   question: r[1],
   answers: [r[2], r[3], r[4], r[5]],
   correct: Number(r[6]),
@@ -319,7 +323,7 @@ io.on('connection', (socket) => {
 
 const listenPort = process.env.PORT || 3000;
 server.listen(listenPort, () => {
-  console.log(`Trivia Night running:`);
-  console.log(`  Host screen: http://localhost:${listenPort}/host`);
-  console.log(`  Phones:      http://localhost:${listenPort}/`);
+  console.log(`Revisão! rodando:`);
+  console.log(`  Tela do apresentador: http://localhost:${listenPort}/host`);
+  console.log(`  Celulares:            http://localhost:${listenPort}/`);
 });

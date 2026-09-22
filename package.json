@@ -2,7 +2,7 @@
   "name": "trivia-night",
   "version": "1.0.0",
   "private": true,
-  "description": "Trivia night game with a host screen and phone buzzers",
+  "description": "Revisão! — jogo de trivia com tela de apresentador e zumbidores de celular",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
