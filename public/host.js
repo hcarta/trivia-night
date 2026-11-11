@@ -6,6 +6,8 @@ const els = {
   joinUrl: document.getElementById('join-url'),
   welcomeStartBtn: document.getElementById('welcome-start-btn'),
   welcomeTeams: document.getElementById('welcome-teams'),
+  setSelect: document.getElementById('set-select'),
+  setInfo: document.getElementById('set-info'),
   grid: document.getElementById('game-grid'),
   phase: document.getElementById('phase-badge'),
   qimg: document.getElementById('q-img'),
@@ -222,12 +224,14 @@ function render(game) {
       ? `Iniciar Jogo (${game.teams.length} equipe${game.teams.length > 1 ? 's' : ''})`
       : 'Iniciar Jogo';
     els.welcomeStartBtn.disabled = game.questionCount === 0;
+    els.progress.textContent = game.questionSet ? game.questionSet.title : '';
+    renderSetPicker(game);
     return;
   }
 
   const { question } = game;
 
-  els.progress.textContent = `Pergunta ${Math.min(game.questionIndex + 1, game.questionCount)} / ${game.questionCount}`;
+  els.progress.textContent = `${game.questionSet ? game.questionSet.title + ' · ' : ''}Pergunta ${Math.min(game.questionIndex + 1, game.questionCount)} / ${game.questionCount}`;
   els.countdown.classList.add('hidden');
 
   if (!question || game.phase === 'finished') {
@@ -301,6 +305,47 @@ function render(game) {
 
 socket.on('game', render);
 
+// ---------- Escolha do arquivo de perguntas ----------
+
+let questionSets = [];
+
+function refreshSets() {
+  socket.emit('host:listSets', (sets) => {
+    questionSets = Array.isArray(sets) ? sets : [];
+    if (lastGame) renderSetPicker(lastGame);
+  });
+}
+
+function renderSetPicker(game) {
+  const current = game.questionSet ? game.questionSet.file : '';
+  const options = questionSets
+    .map((s) => `<option value="${esc(s.file)}"${s.count ? '' : ' disabled'}>${esc(s.title)} (${s.count} pergunta${s.count === 1 ? '' : 's'})</option>`)
+    .join('');
+  if (els.setSelect.dataset.html !== options) {
+    els.setSelect.innerHTML = options || '<option value="">Nenhum arquivo em perguntas/</option>';
+    els.setSelect.dataset.html = options;
+  }
+  if (document.activeElement !== els.setSelect) els.setSelect.value = current;
+  const info = questionSets.find((s) => s.file === current);
+  els.setInfo.textContent = info && info.problems
+    ? `⚠️ ${info.problems} linha(s) com problema foram ignoradas — veja o terminal do servidor.`
+    : '';
+}
+
+els.setSelect.onchange = () => {
+  const file = els.setSelect.value;
+  els.setSelect.disabled = true;
+  socket.emit('host:selectSet', file, (res) => {
+    els.setSelect.disabled = false;
+    if (!res || !res.ok) {
+      alert((res && res.error) || 'Não foi possível trocar as perguntas.');
+      if (lastGame) els.setSelect.value = lastGame.questionSet ? lastGame.questionSet.file : '';
+    }
+  });
+};
+
+socket.on('connect', refreshSets);
+
 // ---------- Cópia de segurança da partida ----------
 // O servidor envia uma cópia da partida a cada mudança e ela fica guardada neste
 // navegador. Se o servidor reiniciar (no Render gratuito isso apaga tudo), a cópia
@@ -342,7 +387,7 @@ function showToast(text) {
 // Atalho do apresentador: Espaço/Enter aciona o botão principal visível.
 document.addEventListener('keydown', (e) => {
   if (e.key !== ' ' && e.key !== 'Enter') return;
-  if (e.target.closest('input, textarea, button') || !els.resultsOverlay.classList.contains('hidden')) return;
+  if (e.target.closest('input, textarea, button, select') || !els.resultsOverlay.classList.contains('hidden')) return;
   const btn = [els.welcomeStartBtn, els.confirmBtn, els.startBtn].find(
     (b) => b.offsetParent !== null && !b.disabled
   );

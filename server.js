@@ -59,12 +59,10 @@ function parseCSV(str) {
   return rows;
 }
 
-// Arquivo de perguntas: questions.csv por padrão, ou outro via QUESTIONS_FILE=arquivo.csv
-const QUESTIONS_FILE = path.resolve(__dirname, process.env.QUESTIONS_FILE || 'questions.csv');
-const csvText = fs.readFileSync(QUESTIONS_FILE, 'utf8').replace(/^﻿/, '');
-// Identifica a versão do CSV: se mudar, o progresso salvo da partida é descartado.
-const csvHash = crypto.createHash('sha1').update(csvText).digest('hex');
-const rawRows = parseCSV(csvText);
+// ---------- Conjuntos de perguntas ----------
+// Cada arquivo .csv na pasta perguntas/ é um conjunto que o apresentador pode
+// escolher na tela inicial. QUESTIONS_FILE define qual vem selecionado.
+const QUESTIONS_DIR = path.join(__dirname, 'perguntas');
 
 function shuffle(arr) {
   // Fisher–Yates: embaralha no lugar
@@ -77,7 +75,7 @@ function shuffle(arr) {
 
 // Lê e valida as perguntas. Linhas com problema são ignoradas com um aviso,
 // em vez de quebrarem o jogo no meio da aula.
-function loadQuestions(rows) {
+function loadQuestions(rows, label, quiet) {
   const list = [];
   const problems = [];
   rows.slice(1).forEach((r, i) => {
@@ -112,15 +110,68 @@ function loadQuestions(rows) {
   for (const q of list) {
     if (q.image && q.image.startsWith('/') && !fs.existsSync(path.join(__dirname, q.image))) q.image = null;
   }
-  if (problems.length) {
-    console.warn(`⚠️  ${path.basename(QUESTIONS_FILE)}: ${problems.length} problema(s) encontrado(s):`);
+  if (problems.length && !quiet) {
+    console.warn(`⚠️  ${label}: ${problems.length} problema(s) encontrado(s):`);
     for (const p of problems) console.warn('   - ' + p);
   }
-  console.log(`${list.length} pergunta(s) carregada(s).`);
-  return list;
+  return { list, problems };
 }
 
-const questions = shuffle(loadQuestions(rawRows));
+// "Historia_P2 - Aulas 08 a 12.csv" -> "Historia P2 - Aulas 08 a 12"
+const titleFromFile = (file) => file.replace(/\.csv$/i, '').replace(/_+/g, ' ').trim();
+
+function readSet(file) {
+  const text = fs.readFileSync(path.join(QUESTIONS_DIR, file), 'utf8').replace(/^\uFEFF/, '');
+  return { text, hash: crypto.createHash('sha1').update(text).digest('hex') };
+}
+
+// Lista os conjuntos disponíveis (lida de novo a cada pedido, então basta
+// colocar um arquivo novo na pasta e recarregar a tela do apresentador).
+function listQuestionSets() {
+  let files = [];
+  try {
+    files = fs.readdirSync(QUESTIONS_DIR).filter((f) => /\.csv$/i.test(f) && !f.startsWith('.'));
+  } catch {}
+  return files
+    .sort((a, b) => a.localeCompare(b, 'pt-BR', { numeric: true }))
+    .map((file) => {
+      try {
+        const { list, problems } = loadQuestions(parseCSV(readSet(file).text), file, true);
+        return { file, title: titleFromFile(file), count: list.length, problems: problems.length };
+      } catch {
+        return { file, title: titleFromFile(file), count: 0, problems: 1 };
+      }
+    });
+}
+
+const questions = [];
+// Conjunto em uso: { file, title, hash }
+let questionSet = null;
+
+// Carrega um conjunto (embaralhado). Retorna false se o arquivo não existe ou não tem perguntas.
+function loadQuestionSet(file) {
+  if (typeof file !== 'string' || path.basename(file) !== file || !/\.csv$/i.test(file)) return false;
+  let data;
+  try {
+    data = readSet(file);
+  } catch {
+    return false;
+  }
+  const { list } = loadQuestions(parseCSV(data.text), file);
+  if (!list.length) return false;
+  questions.splice(0, questions.length, ...shuffle(list));
+  questionSet = { file, title: titleFromFile(file), hash: data.hash };
+  console.log(`Perguntas: "${questionSet.title}" (${list.length} pergunta(s)).`);
+  return true;
+}
+
+{
+  const preferred = process.env.QUESTIONS_FILE ? path.basename(process.env.QUESTIONS_FILE) : 'questions.csv';
+  const sets = listQuestionSets();
+  if (!loadQuestionSet(preferred) && !sets.some((s) => s.count && loadQuestionSet(s.file))) {
+    console.warn(`⚠️  Nenhum arquivo de perguntas válido em ${QUESTIONS_DIR}.`);
+  }
+}
 
 function getLanIp() {
   const nets = os.networkInterfaces();
@@ -235,7 +286,8 @@ function snapshot() {
     version: 1,
     bootId,
     savedAt: Date.now(),
-    csvHash,
+    questionSet: questionSet && questionSet.file,
+    csvHash: questionSet && questionSet.hash,
     questionOrder: questions.map((q) => q.id),
     questionIndex: state.questionIndex,
     phase: state.phase,
@@ -284,10 +336,14 @@ function applySnapshot(saved) {
     }
   }
 
+  // Volta para o conjunto de perguntas que estava em uso.
+  if (typeof saved.questionSet === 'string' && (!questionSet || saved.questionSet !== questionSet.file)) {
+    loadQuestionSet(saved.questionSet);
+  }
   const byId = new Map(questions.map((q) => [q.id, q]));
   const order = Array.isArray(saved.questionOrder) ? saved.questionOrder : [];
   const sameCsv =
-    saved.csvHash === csvHash && order.length === questions.length && new Set(order).size === order.length && order.every((id) => byId.has(id));
+    questionSet && saved.csvHash === questionSet.hash && order.length === questions.length && new Set(order).size === order.length && order.every((id) => byId.has(id));
   if (sameCsv) {
     questions.splice(0, questions.length, ...order.map((id) => byId.get(id)));
     const qi = saved.questionIndex;
@@ -308,7 +364,10 @@ function applySnapshot(saved) {
       });
     }
   } else {
-    console.log(`${path.basename(QUESTIONS_FILE)} mudou desde a última partida: equipes e pontos mantidos, perguntas recomeçam.`);
+    state.questionIndex = -1;
+    state.phase = 'idle';
+    state.responses = new Map();
+    console.log('O arquivo de perguntas mudou desde a última partida: equipes e pontos mantidos, perguntas recomeçam.');
   }
   console.log(
     `Partida restaurada: ${state.teams.size} equipe(s)` +
@@ -416,6 +475,7 @@ function basePayload() {
     phase: state.phase,
     questionIndex: state.questionIndex,
     questionCount: questions.length,
+    questionSet: questionSet ? { file: questionSet.file, title: questionSet.title } : null,
     serverNow: Date.now(),
     answerMs: ANSWER_MS,
     nextPoints: slotsFull() ? null : pointsForPosition(state.responses.size),
@@ -547,6 +607,19 @@ io.on('connection', (socket) => {
     hostSockets.add(socket.id);
     const restored = restoreFromHost(backup);
     reply({ restored, savedAt: restored ? backup.savedAt : null });
+    broadcast();
+  });
+
+  socket.on('host:listSets', (cb) => {
+    if (typeof cb === 'function') cb(listQuestionSets());
+  });
+
+  // Trocar o conjunto de perguntas: só antes de a partida começar.
+  socket.on('host:selectSet', (file, cb) => {
+    const reply = typeof cb === 'function' ? cb : () => {};
+    if (state.questionIndex !== -1) return reply({ ok: false, error: 'A partida já começou. Reinicie o jogo para trocar as perguntas.' });
+    if (!loadQuestionSet(file)) return reply({ ok: false, error: 'Não foi possível carregar esse arquivo.' });
+    reply({ ok: true });
     broadcast();
   });
 
