@@ -947,3 +947,21 @@ body.phone {
   font-weight: 700;
   text-align: center;
 }
+
+/* ---------- Aviso flutuante (apresentador) ---------- */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 1.5rem;
+  transform: translateX(-50%);
+  max-width: min(90vw, 560px);
+  padding: 0.8rem 1.2rem;
+  border-radius: 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--ok);
+  color: var(--text);
+  font-weight: 700;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+  z-index: 50;
+}

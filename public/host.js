@@ -301,6 +301,44 @@ function render(game) {
 
 socket.on('game', render);
 
+// ---------- Cópia de segurança da partida ----------
+// O servidor envia uma cópia da partida a cada mudança e ela fica guardada neste
+// navegador. Se o servidor reiniciar (no Render gratuito isso apaga tudo), a cópia
+// é devolvida ao reconectar e a partida continua de onde parou.
+const BACKUP_KEY = 'revisao-host-backup';
+
+function loadBackup() {
+  try {
+    return JSON.parse(localStorage.getItem(BACKUP_KEY) || 'null');
+  } catch {
+    return null;
+  }
+}
+
+socket.on('host:backup', (backup) => {
+  try {
+    localStorage.setItem(BACKUP_KEY, JSON.stringify(backup));
+  } catch {}
+});
+
+socket.on('connect', () => {
+  socket.emit('host:hello', loadBackup(), (res) => {
+    if (res && res.restored) {
+      const at = new Date(res.savedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      showToast(`O servidor reiniciou — partida restaurada (cópia das ${at}).`);
+    }
+  });
+});
+
+let toastTimer = null;
+function showToast(text) {
+  const el = document.getElementById('toast');
+  el.textContent = text;
+  el.classList.remove('hidden');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.add('hidden'), 8000);
+}
+
 // Atalho do apresentador: Espaço/Enter aciona o botão principal visível.
 document.addEventListener('keydown', (e) => {
   if (e.key !== ' ' && e.key !== 'Enter') return;

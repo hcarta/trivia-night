@@ -218,10 +218,23 @@ function attachSocket(team, socket) {
 }
 
 // ---------- Persistência ----------
+// A partida é guardada em dois lugares:
+//  1. no arquivo STATE_FILE (funciona quando o servidor roda num computador);
+//  2. no navegador do apresentador (localStorage), para hospedagens como o Render
+//     gratuito, em que o disco é apagado quando o servidor reinicia. Quando o
+//     servidor volta vazio, a tela /host devolve essa cópia automaticamente.
+
+// Muda a cada vez que o servidor sobe: o apresentador só restaura uma cópia
+// feita por uma execução anterior do servidor.
+const bootId = crypto.randomUUID();
+const HOST_BACKUP_MAX_AGE_MS = 6 * 60 * 60 * 1000; // cópias com mais de 6h são ignoradas (outra aula)
+const hostSockets = new Set();
 
 function snapshot() {
   return {
     version: 1,
+    bootId,
+    savedAt: Date.now(),
     csvHash,
     questionOrder: questions.map((q) => q.id),
     questionIndex: state.questionIndex,
@@ -248,26 +261,52 @@ function saveNow() {
   }
 }
 
-function loadSaved() {
-  let saved;
-  try {
-    saved = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-  } catch {
-    return; // sem arquivo salvo (ou corrompido): começa do zero
+const isNum = (n) => typeof n === 'number' && Number.isFinite(n);
+
+// Aplica uma cópia salva ao estado atual. Os dados podem vir de um navegador,
+// então tudo é conferido. Equipes que entraram depois do reinício são mantidas;
+// se uma delas tem o mesmo nome de uma equipe da cópia, as duas viram uma só
+// (o celular continua conectado e recupera os pontos).
+function applySnapshot(saved) {
+  if (!saved || typeof saved !== 'object' || !Array.isArray(saved.teams)) return false;
+  const idMap = new Map();
+  for (const t of saved.teams.slice(0, 500)) {
+    if (!t || typeof t.id !== 'string' || typeof t.name !== 'string' || !t.name.trim()) continue;
+    const name = t.name.trim().slice(0, 30);
+    const score = isNum(t.score) ? Math.max(0, Math.round(t.score)) : 0;
+    const same = [...state.teams.values()].find((x) => normName(x.name) === normName(name));
+    if (same) {
+      same.score = score;
+      idMap.set(t.id, same.id);
+    } else if (!state.teams.has(t.id)) {
+      state.teams.set(t.id, { id: t.id, name, score, socketId: null });
+      idMap.set(t.id, t.id);
+    }
   }
-  for (const t of saved.teams || []) {
-    if (t && typeof t.id === 'string' && typeof t.name === 'string')
-      state.teams.set(t.id, { id: t.id, name: t.name, score: Number(t.score) || 0, socketId: null });
-  }
+
   const byId = new Map(questions.map((q) => [q.id, q]));
   const order = Array.isArray(saved.questionOrder) ? saved.questionOrder : [];
-  const sameCsv = saved.csvHash === csvHash && order.length === questions.length && order.every((id) => byId.has(id));
+  const sameCsv =
+    saved.csvHash === csvHash && order.length === questions.length && new Set(order).size === order.length && order.every((id) => byId.has(id));
   if (sameCsv) {
     questions.splice(0, questions.length, ...order.map((id) => byId.get(id)));
-    state.questionIndex = Number.isInteger(saved.questionIndex) ? saved.questionIndex : -1;
+    const qi = saved.questionIndex;
+    state.questionIndex = Number.isInteger(qi) && qi >= -1 && qi < questions.length ? qi : -1;
     state.phase = ['idle', 'buzzing', 'revealed', 'finished'].includes(saved.phase) ? saved.phase : 'idle';
-    state.responses = new Map((saved.responses || []).filter(([id]) => state.teams.has(id)));
     if (state.questionIndex === -1) state.phase = 'idle';
+    state.responses = new Map();
+    for (const entry of Array.isArray(saved.responses) ? saved.responses : []) {
+      if (!Array.isArray(entry) || !entry[1] || typeof entry[1] !== 'object') continue;
+      const id = idMap.get(entry[0]);
+      const r = entry[1];
+      if (!id || state.responses.has(id) || state.responses.size >= MAX_BUZZERS) continue;
+      state.responses.set(id, {
+        position: state.responses.size,
+        deadline: isNum(r.deadline) ? r.deadline : 0,
+        answer: Number.isInteger(r.answer) && r.answer >= 0 && r.answer < 4 ? r.answer : null,
+        delta: isNum(r.delta) ? r.delta : null,
+      });
+    }
   } else {
     console.log(`${path.basename(QUESTIONS_FILE)} mudou desde a última partida: equipes e pontos mantidos, perguntas recomeçam.`);
   }
@@ -276,8 +315,25 @@ function loadSaved() {
       (state.questionIndex >= 0 ? `, pergunta ${state.questionIndex + 1}/${questions.length}` : '') +
       '. Use "Reiniciar Jogo" para zerar.'
   );
+  return true;
 }
-loadSaved();
+
+// Restaura a partida a partir da cópia do apresentador, se fizer sentido.
+function restoreFromHost(backup) {
+  if (!backup || typeof backup !== 'object') return false;
+  if (backup.bootId === bootId) return false; // mesmo servidor: nada se perdeu
+  if (!isNum(backup.savedAt) || Date.now() - backup.savedAt > HOST_BACKUP_MAX_AGE_MS) return false;
+  if (state.questionIndex !== -1) return false; // já há uma partida em andamento neste servidor
+  if (!Array.isArray(backup.teams) || !backup.teams.length) return false;
+  console.log('Servidor reiniciou: restaurando a partida a partir da cópia do apresentador.');
+  return applySnapshot(backup);
+}
+
+try {
+  applySnapshot(JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')));
+} catch {
+  // sem arquivo salvo (ou corrompido): começa do zero
+}
 
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {
@@ -392,6 +448,10 @@ function broadcast() {
   scheduleAutoReveal();
   const base = basePayload();
   for (const [id, socket] of io.sockets.sockets) socket.emit('game', payloadFor(id, base));
+  if (hostSockets.size) {
+    const backup = snapshot();
+    for (const id of hostSockets) io.sockets.sockets.get(id)?.emit('host:backup', backup);
+  }
   scheduleExpiryBroadcast();
   saveSoon();
 }
@@ -481,6 +541,15 @@ io.on('connection', (socket) => {
     broadcast();
   });
 
+  // A tela do apresentador se identifica e envia a cópia que tem guardada.
+  socket.on('host:hello', (backup, cb) => {
+    const reply = typeof cb === 'function' ? cb : () => {};
+    hostSockets.add(socket.id);
+    const restored = restoreFromHost(backup);
+    reply({ restored, savedAt: restored ? backup.savedAt : null });
+    broadcast();
+  });
+
   socket.on('host:start', () => {
     // Só avança depois de revelar (ou a partir da tela inicial).
     if (state.phase !== 'idle' && state.phase !== 'revealed') return;
@@ -522,6 +591,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
+    hostSockets.delete(socket.id);
     const teamId = state.socketTeams.get(socket.id);
     if (!teamId) return;
     state.socketTeams.delete(socket.id);

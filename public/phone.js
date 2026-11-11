@@ -37,6 +37,8 @@ function saveMe(teamId, name) {
 }
 
 function onJoined(teamId, name) {
+  clearTimeout(restoreTimer);
+  restoreGen += 1; // descarta respostas de tentativas de reconexão em andamento
   meId = teamId;
   joined = true;
   saveMe(teamId, name);
@@ -44,16 +46,43 @@ function onJoined(teamId, name) {
   if (lastGame) render(lastGame);
 }
 
+// Se o servidor reiniciou, a equipe só volta a existir depois que o apresentador
+// abrir a tela /host (que devolve a partida). Por isso, em caso de falha, o celular
+// continua tentando por alguns minutos, sem esquecer a equipe.
+const RESTORE_RETRY_MS = 3000;
+const RESTORE_GIVE_UP_MS = 5 * 60 * 1000;
+let restoreTimer = null;
+let restoreStartedAt = 0;
+let restoreGen = 0;
+
 function tryRestore() {
   const saved = loadSaved();
   if (!saved || !saved.id) return;
+  if (!restoreStartedAt) restoreStartedAt = Date.now();
+  clearTimeout(restoreTimer);
+  const gen = restoreGen;
   socket.emit('phone:restore', saved.id, (res) => {
+    if (gen !== restoreGen) return; // entrou manualmente enquanto isso
     if (res && res.ok) {
+      restoreStartedAt = 0;
+      $('join-error').textContent = '';
       onJoined(saved.id, res.name);
+      return;
+    }
+    // O servidor não conhece mais esta equipe (provavelmente reiniciou).
+    joined = false;
+    meId = null;
+    clearCountdown();
+    show('screen-join');
+    if (!$('join-name').value) $('join-name').value = saved.name || '';
+    $('phone-name').textContent = 'Entre no jogo';
+    if (Date.now() - restoreStartedAt < RESTORE_GIVE_UP_MS) {
+      $('join-error').textContent = `Reconectando à equipe "${saved.name}"… ou toque em Entrar.`;
+      restoreTimer = setTimeout(tryRestore, RESTORE_RETRY_MS);
     } else {
       clearSaved();
-      $('join-name').value = saved.name || '';
-      $('phone-name').textContent = 'Entre no jogo';
+      restoreStartedAt = 0;
+      $('join-error').textContent = '';
     }
   });
 }
