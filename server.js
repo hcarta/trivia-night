@@ -59,7 +59,13 @@ function parseCSV(str) {
   return rows;
 }
 
-const rawRows = parseCSV(fs.readFileSync(path.join(__dirname, 'questions.csv'), 'utf8').replace(/^\uFEFF/, ''));
+// Arquivo de perguntas: questions.csv por padrão, ou outro via QUESTIONS_FILE=arquivo.csv
+const QUESTIONS_FILE = path.resolve(__dirname, process.env.QUESTIONS_FILE || 'questions.csv');
+const csvText = fs.readFileSync(QUESTIONS_FILE, 'utf8').replace(/^﻿/, '');
+// Identifica a versão do CSV: se mudar, o progresso salvo da partida é descartado.
+const csvHash = crypto.createHash('sha1').update(csvText).digest('hex');
+const rawRows = parseCSV(csvText);
+
 function shuffle(arr) {
   // Fisher–Yates: embaralha no lugar
   for (let i = arr.length - 1; i > 0; i--) {
@@ -69,15 +75,52 @@ function shuffle(arr) {
   return arr;
 }
 
-let questions = shuffle(
-  rawRows.slice(1).map((r) => ({
-    category: r[0] || 'Geral',
-    question: r[1],
-    answers: [r[2], r[3], r[4], r[5]],
-    correct: Number(r[6]),
-    image: (r[7] || '').trim() || null,
-  }))
-);
+// Lê e valida as perguntas. Linhas com problema são ignoradas com um aviso,
+// em vez de quebrarem o jogo no meio da aula.
+function loadQuestions(rows) {
+  const list = [];
+  const problems = [];
+  rows.slice(1).forEach((r, i) => {
+    const line = i + 2; // linha no arquivo (1 = cabeçalho)
+    const clean = (s) => String(s ?? '').trim();
+    const question = clean(r[1]);
+    const answers = [r[2], r[3], r[4], r[5]].map(clean);
+    const correctRaw = clean(r[6]);
+    const correct = Number(correctRaw);
+    const image = clean(r[7]) || null;
+
+    if (!question) return problems.push(`linha ${line}: pergunta vazia`);
+    if (answers.filter(Boolean).length < 2) return problems.push(`linha ${line}: menos de 2 alternativas`);
+    if (correctRaw === '' || !Number.isInteger(correct) || correct < 0 || correct > 3)
+      return problems.push(`linha ${line}: coluna "correct" deve ser 0, 1, 2 ou 3 (veio "${correctRaw}")`);
+    if (!answers[correct]) return problems.push(`linha ${line}: "correct" aponta para uma alternativa vazia`);
+    if (image && !/^https?:\/\//i.test(image)) {
+      const local = path.join(__dirname, image.replace(/^\/+/, ''));
+      if (!fs.existsSync(local)) problems.push(`linha ${line}: imagem não encontrada (${image}) — pergunta mantida sem imagem`);
+    }
+
+    list.push({
+      id: line,
+      category: clean(r[0]) || 'Geral',
+      question,
+      answers,
+      correct,
+      image: image && !/^https?:\/\//i.test(image) ? '/' + image.replace(/^\/+/, '') : image,
+    });
+  });
+  // Imagens locais inexistentes são removidas para não aparecer um ícone quebrado.
+  for (const q of list) {
+    if (q.image && q.image.startsWith('/') && !fs.existsSync(path.join(__dirname, q.image))) q.image = null;
+  }
+  if (problems.length) {
+    console.warn(`⚠️  ${path.basename(QUESTIONS_FILE)}: ${problems.length} problema(s) encontrado(s):`);
+    for (const p of problems) console.warn('   - ' + p);
+  }
+  console.log(`${list.length} pergunta(s) carregada(s).`);
+  return list;
+}
+
+const questions = shuffle(loadQuestions(rawRows));
 
 function getLanIp() {
   const nets = os.networkInterfaces();
@@ -112,22 +155,38 @@ app.get('/config', async (req, res) => {
   res.json(await configCache);
 });
 
-const POINTS = 100;
+// ---------- Pontuação ----------
+// Todos que apertarem podem responder. Quem acerta ganha pontos conforme a
+// ordem em que apertou: 1º = POINTS_MAX, cada posição seguinte vale
+// POINTS_STEP a menos, nunca abaixo de POINTS_MIN. Resposta errada perde PENALTY.
+const POINTS_MAX = 100;
+const POINTS_STEP = 20;
+const POINTS_MIN = 20;
 const PENALTY = 20;
-const GRACE_MS = 300000;
-const ANSWER_MS = 5000;
+const ANSWER_MS = 10000; // tempo para responder, contado a partir do momento em que a equipe apertou
+const ANSWER_SLACK_MS = 750;
+// Só as primeiras MAX_BUZZERS equipes podem apertar em cada pergunta; as demais ficam
+// de fora. Evita que alguém espere de propósito para pesquisar a resposta.
+const MAX_BUZZERS = Number(process.env.MAX_BUZZERS) || 5; // tolerância de rede para respostas no limite
+// Revela sozinho quando todas as equipes conectadas já responderam (ou esgotaram o tempo).
+const AUTO_REVEAL = true;
+const AUTO_REVEAL_DELAY_MS = 1500;
+// Onde a partida é salva, para sobreviver a um reinício do servidor.
+const STATE_FILE = process.env.STATE_FILE || path.join(__dirname, 'game-state.json');
+
+const pointsForPosition = (pos) => Math.max(POINTS_MIN, POINTS_MAX - pos * POINTS_STEP);
 
 const state = {
+  // teamId -> { id, name, score, socketId }
+  // Equipes nunca são apagadas sozinhas (só pelo botão do apresentador),
+  // para ninguém perder pontos porque o celular bloqueou a tela.
   teams: new Map(),
   socketTeams: new Map(),
   questionIndex: -1,
-  phase: 'idle',
-  pickedTeam: null,
-  answerChosen: null,
-  buzzQueue: [],
-  answerDeadline: null,
-  answerTimer: null,
-  chanced: new Set(),
+  phase: 'idle', // idle | buzzing | revealed | finished
+  // teamId -> { position, deadline, answer: number|null, delta: number|null }
+  // Map preserva a ordem de inserção = ordem em que apertaram.
+  responses: new Map(),
 };
 
 const currentQuestion = () =>
@@ -135,12 +194,15 @@ const currentQuestion = () =>
     ? questions[state.questionIndex]
     : null;
 
+const isOnline = (t) => !!(t.socketId && io.sockets.sockets.get(t.socketId));
+const normName = (s) => s.normalize('NFC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('pt-BR');
+
 const publicTeams = () =>
-  Array.from(state.teams.entries()).map(([id, t]) => ({
-    id,
+  Array.from(state.teams.values()).map((t) => ({
+    id: t.id,
     name: t.name,
     score: t.score,
-    online: !!(t.socketId && io.sockets.sockets.get(t.socketId)),
+    online: isOnline(t),
   }));
 
 function teamForSocket(socketId) {
@@ -148,173 +210,311 @@ function teamForSocket(socketId) {
   return teamId ? state.teams.get(teamId) || null : null;
 }
 
-function stopGrace(team) {
-  clearTimeout(team.graceTimer);
-  team.graceTimer = null;
+function attachSocket(team, socket) {
+  // Se a equipe estava aberta em outro aparelho/aba, desvincula o socket antigo.
+  if (team.socketId && team.socketId !== socket.id) state.socketTeams.delete(team.socketId);
+  team.socketId = socket.id;
+  state.socketTeams.set(socket.id, team.id);
 }
 
-function startGrace(team) {
-  if (team.graceTimer) return;
-  team.socketId = null;
-  team.graceTimer = setTimeout(() => {
-    team.graceTimer = null;
-    if (state.teams.delete(team.id)) broadcast();
-  }, GRACE_MS);
+// ---------- Persistência ----------
+
+function snapshot() {
+  return {
+    version: 1,
+    csvHash,
+    questionOrder: questions.map((q) => q.id),
+    questionIndex: state.questionIndex,
+    phase: state.phase,
+    teams: [...state.teams.values()].map(({ id, name, score }) => ({ id, name, score })),
+    responses: [...state.responses.entries()],
+  };
 }
 
-function clearAnswerTimer() {
-  clearTimeout(state.answerTimer);
-  state.answerTimer = null;
-  state.answerDeadline = null;
+let saveTimer = null;
+function saveSoon() {
+  if (saveTimer) return;
+  saveTimer = setTimeout(saveNow, 300);
 }
-
-function giveFloorTo(teamId) {
-  state.pickedTeam = teamId;
-  state.chanced.add(teamId);
-  state.answerChosen = null;
-  state.phase = 'answering';
-  state.answerDeadline = Date.now() + ANSWER_MS;
-  state.answerTimer = setTimeout(passFloorToNext, ANSWER_MS);
-}
-
-function passFloorToNext() {
-  clearAnswerTimer();
-  const idx = state.buzzQueue.indexOf(state.pickedTeam);
-  if (idx !== -1) state.buzzQueue.splice(idx, 1);
-  if (state.buzzQueue.length) {
-    giveFloorTo(state.buzzQueue[0]);
-  } else {
-    state.pickedTeam = null;
-    state.answerChosen = null;
-    state.phase = 'buzzing';
+function saveNow() {
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  try {
+    const tmp = STATE_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(snapshot()));
+    fs.renameSync(tmp, STATE_FILE); // troca atômica: nunca deixa um arquivo pela metade
+  } catch (err) {
+    console.warn('Não foi possível salvar a partida:', err.message);
   }
-  broadcast();
 }
 
-function statePayload() {
+function loadSaved() {
+  let saved;
+  try {
+    saved = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+  } catch {
+    return; // sem arquivo salvo (ou corrompido): começa do zero
+  }
+  for (const t of saved.teams || []) {
+    if (t && typeof t.id === 'string' && typeof t.name === 'string')
+      state.teams.set(t.id, { id: t.id, name: t.name, score: Number(t.score) || 0, socketId: null });
+  }
+  const byId = new Map(questions.map((q) => [q.id, q]));
+  const order = Array.isArray(saved.questionOrder) ? saved.questionOrder : [];
+  const sameCsv = saved.csvHash === csvHash && order.length === questions.length && order.every((id) => byId.has(id));
+  if (sameCsv) {
+    questions.splice(0, questions.length, ...order.map((id) => byId.get(id)));
+    state.questionIndex = Number.isInteger(saved.questionIndex) ? saved.questionIndex : -1;
+    state.phase = ['idle', 'buzzing', 'revealed', 'finished'].includes(saved.phase) ? saved.phase : 'idle';
+    state.responses = new Map((saved.responses || []).filter(([id]) => state.teams.has(id)));
+    if (state.questionIndex === -1) state.phase = 'idle';
+  } else {
+    console.log(`${path.basename(QUESTIONS_FILE)} mudou desde a última partida: equipes e pontos mantidos, perguntas recomeçam.`);
+  }
+  console.log(
+    `Partida restaurada: ${state.teams.size} equipe(s)` +
+      (state.questionIndex >= 0 ? `, pergunta ${state.questionIndex + 1}/${questions.length}` : '') +
+      '. Use "Reiniciar Jogo" para zerar.'
+  );
+}
+loadSaved();
+
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, () => {
+    saveNow();
+    process.exit(0);
+  });
+}
+
+// ---------- Prazos e revelação automática ----------
+
+// Um único timer "acorda" o servidor quando o prazo de alguém expira, só para
+// atualizar as telas (o prazo em si é validado em phone:answer).
+let expiryTimer = null;
+function scheduleExpiryBroadcast() {
+  clearTimeout(expiryTimer);
+  expiryTimer = null;
+  if (state.phase !== 'buzzing') return;
+  const now = Date.now();
+  const pending = [...state.responses.values()]
+    .filter((r) => r.answer == null && r.deadline > now)
+    .map((r) => r.deadline);
+  if (!pending.length) return;
+  expiryTimer = setTimeout(() => broadcast(), Math.min(...pending) - now + 50);
+}
+
+const slotsFull = () => state.responses.size >= MAX_BUZZERS;
+
+// Ninguém mais pode apertar (vagas esgotadas ou todas as equipes conectadas já apertaram)
+// e quem apertou já respondeu (ou o tempo acabou)?
+function everyoneDone() {
+  if (state.phase !== 'buzzing' || !state.responses.size) return false;
+  const now = Date.now();
+  const resolved = [...state.responses.values()].every((r) => r.answer != null || now > r.deadline + ANSWER_SLACK_MS);
+  if (!resolved) return false;
+  if (slotsFull()) return true;
+  const online = [...state.teams.values()].filter(isOnline);
+  return online.length > 0 && online.every((t) => state.responses.has(t.id));
+}
+
+let autoRevealTimer = null;
+function cancelAutoReveal() {
+  clearTimeout(autoRevealTimer);
+  autoRevealTimer = null;
+}
+function scheduleAutoReveal() {
+  if (!AUTO_REVEAL || autoRevealTimer || !everyoneDone()) return;
+  const q = state.questionIndex;
+  autoRevealTimer = setTimeout(() => {
+    autoRevealTimer = null;
+    // Confere de novo: alguém pode ter entrado ou o apresentador já revelou.
+    if (state.questionIndex === q && everyoneDone()) {
+      reveal();
+      broadcast();
+    }
+  }, AUTO_REVEAL_DELAY_MS);
+}
+
+// ---------- Estado enviado às telas ----------
+
+function responsesPayload(revealed) {
+  const now = Date.now();
+  return [...state.responses.entries()].map(([teamId, r]) => ({
+    teamId,
+    position: r.position,
+    points: pointsForPosition(r.position),
+    deadline: r.deadline,
+    answered: r.answer != null,
+    expired: r.answer == null && now > r.deadline,
+    // A escolha de cada equipe só é revelada depois da revelação,
+    // senão quem aperta depois poderia copiar olhando o telão.
+    answer: revealed ? r.answer : undefined,
+    delta: revealed ? r.delta : undefined,
+  }));
+}
+
+function basePayload() {
   const q = currentQuestion();
+  const revealed = state.phase === 'revealed';
   return {
     phase: state.phase,
     questionIndex: state.questionIndex,
     questionCount: questions.length,
-    pickedTeam: state.pickedTeam,
-    answerChosen: state.answerChosen,
-    buzzQueue: state.buzzQueue,
-    answerEndsAt: state.answerDeadline,
+    serverNow: Date.now(),
+    answerMs: ANSWER_MS,
+    nextPoints: slotsFull() ? null : pointsForPosition(state.responses.size),
+    maxBuzzers: MAX_BUZZERS,
+    slotsLeft: Math.max(0, MAX_BUZZERS - state.responses.size),
+    autoRevealing: !!autoRevealTimer,
+    responses: responsesPayload(revealed),
     teams: publicTeams(),
     question: q
       ? {
           category: q.category,
           question: q.question,
           answers: q.answers,
-          correct: q.correct,
+          // O gabarito só sai do servidor depois da revelação.
+          correct: revealed ? q.correct : null,
           image: q.image,
         }
       : null,
   };
 }
 
+function payloadFor(socketId, base) {
+  const team = teamForSocket(socketId);
+  const r = team ? state.responses.get(team.id) : null;
+  // Cada celular recebe a própria resposta (para restaurar após reconexão).
+  return { ...base, mine: r ? { position: r.position, answer: r.answer, deadline: r.deadline } : null };
+}
+
 function broadcast() {
-  io.emit('game', statePayload());
+  scheduleAutoReveal();
+  const base = basePayload();
+  for (const [id, socket] of io.sockets.sockets) socket.emit('game', payloadFor(id, base));
+  scheduleExpiryBroadcast();
+  saveSoon();
 }
 
 function nextQuestion() {
   if (state.questionIndex + 1 >= questions.length) return false;
   state.questionIndex += 1;
   state.phase = 'buzzing';
-  state.pickedTeam = null;
-  state.answerChosen = null;
-  state.buzzQueue = [];
-  state.chanced.clear();
-  clearAnswerTimer();
+  state.responses.clear();
   return true;
 }
 
+function reveal() {
+  cancelAutoReveal();
+  const q = currentQuestion();
+  if (!q || state.phase !== 'buzzing') return;
+  for (const [teamId, r] of state.responses) {
+    const t = state.teams.get(teamId);
+    if (r.answer == null) r.delta = 0;
+    else if (r.answer === q.correct) r.delta = pointsForPosition(r.position);
+    else r.delta = -Math.min(PENALTY, t ? t.score : 0);
+    if (t) t.score += r.delta;
+  }
+  state.phase = 'revealed';
+}
+
+// ---------- Eventos ----------
+
 io.on('connection', (socket) => {
-  socket.emit('game', statePayload());
+  socket.emit('game', payloadFor(socket.id, basePayload()));
 
   socket.on('phone:join', (name, cb) => {
-    const clean = String(name || '').trim().slice(0, 30);
-    if (!clean) return cb && cb({ ok: false });
+    const reply = typeof cb === 'function' ? cb : () => {};
+    const clean = String(name || '').trim().replace(/\s+/g, ' ').slice(0, 30);
+    if (!clean) return reply({ ok: false, error: 'Digite o nome da equipe.' });
     const existing = teamForSocket(socket.id);
-    if (existing) {
-      stopGrace(existing);
-      return cb && cb({ ok: true, teamId: existing.id, name: existing.name });
+    if (existing) return reply({ ok: true, teamId: existing.id, name: existing.name });
+
+    const same = [...state.teams.values()].find((t) => normName(t.name) === normName(clean));
+    if (same) {
+      // Nome já usado: se aquela equipe está desconectada, este celular a assume
+      // (ex.: aluno trocou de aparelho ou limpou o navegador). Se está conectada, recusa.
+      if (isOnline(same)) return reply({ ok: false, error: 'Já existe uma equipe com esse nome. Escolha outro.' });
+      attachSocket(same, socket);
+      reply({ ok: true, teamId: same.id, name: same.name });
+      return broadcast();
     }
-    const teamId = crypto.randomUUID();
-    const team = {
-      id: teamId,
-      name: clean,
-      score: 0,
-      socketId: socket.id,
-      graceTimer: null,
-    };
-    state.teams.set(teamId, team);
-    state.socketTeams.set(socket.id, teamId);
-    cb && cb({ ok: true, teamId, name: clean });
+
+    const team = { id: crypto.randomUUID(), name: clean, score: 0, socketId: null };
+    state.teams.set(team.id, team);
+    attachSocket(team, socket);
+    reply({ ok: true, teamId: team.id, name: clean });
     broadcast();
   });
 
   socket.on('phone:restore', (teamId, cb) => {
-    if (typeof teamId !== 'string') return cb && cb({ ok: false });
-    const team = state.teams.get(teamId);
-    if (!team) return cb && cb({ ok: false });
-    stopGrace(team);
-    team.socketId = socket.id;
-    state.socketTeams.set(socket.id, teamId);
-    cb && cb({ ok: true, name: team.name, score: team.score });
+    const reply = typeof cb === 'function' ? cb : () => {};
+    const team = typeof teamId === 'string' ? state.teams.get(teamId) : null;
+    if (!team) return reply({ ok: false });
+    attachSocket(team, socket);
+    reply({ ok: true, name: team.name, score: team.score });
     broadcast();
   });
 
   socket.on('phone:buzz', () => {
-    if (state.phase !== 'buzzing' && state.phase !== 'answering') return;
+    if (state.phase !== 'buzzing') return;
     const team = teamForSocket(socket.id);
-    if (!team || state.chanced.has(team.id) || state.buzzQueue.includes(team.id)) return;
-    state.buzzQueue.push(team.id);
-    if (state.phase === 'buzzing') giveFloorTo(team.id);
+    if (!team || state.responses.has(team.id) || slotsFull()) return;
+    state.responses.set(team.id, {
+      position: state.responses.size,
+      deadline: Date.now() + ANSWER_MS,
+      answer: null,
+      delta: null,
+    });
     broadcast();
   });
 
   socket.on('phone:answer', (idx) => {
-    if (state.phase !== 'answering') return;
+    if (state.phase !== 'buzzing') return;
     const team = teamForSocket(socket.id);
-    if (!team || state.pickedTeam !== team.id) return;
+    const r = team && state.responses.get(team.id);
+    if (!r || r.answer != null) return;
+    if (Date.now() > r.deadline + ANSWER_SLACK_MS) return;
     const q = currentQuestion();
-    if (!q || typeof idx !== 'number' || idx < 0 || idx >= q.answers.length) return;
-    state.answerChosen = idx;
-    clearAnswerTimer();
+    if (!q || !Number.isInteger(idx) || idx < 0 || idx >= q.answers.length || !q.answers[idx]) return;
+    r.answer = idx;
     broadcast();
   });
 
   socket.on('host:start', () => {
+    // Só avança depois de revelar (ou a partir da tela inicial).
+    if (state.phase !== 'idle' && state.phase !== 'revealed') return;
     if (nextQuestion()) return broadcast();
-    if (state.questionIndex >= 0 && state.questionIndex >= questions.length - 1 && questions.length > 0) {
-      clearAnswerTimer();
+    if (questions.length > 0) {
       state.phase = 'finished';
       broadcast();
     }
   });
 
   socket.on('host:confirm', () => {
-    if (state.phase !== 'answering') return;
-    clearAnswerTimer();
-    const q = currentQuestion();
-    const t = state.pickedTeam ? state.teams.get(state.pickedTeam) : null;
-    if (q && t && state.answerChosen === q.correct) t.score += POINTS;
-    else if (q && t && state.answerChosen != null) t.score = Math.max(0, t.score - PENALTY);
-    state.phase = 'revealed';
-    state.buzzQueue = [];
+    if (state.phase !== 'buzzing') return;
+    reveal();
+    broadcast();
+  });
+
+  socket.on('host:removeTeam', (teamId) => {
+    const team = typeof teamId === 'string' ? state.teams.get(teamId) : null;
+    if (!team) return;
+    state.teams.delete(team.id);
+    state.responses.delete(team.id);
+    if (team.socketId) {
+      state.socketTeams.delete(team.socketId);
+      const s = io.sockets.sockets.get(team.socketId);
+      if (s) s.emit('phone:removed');
+    }
     broadcast();
   });
 
   socket.on('host:restart', () => {
-    clearAnswerTimer();
+    cancelAutoReveal();
     state.questionIndex = -1;
     state.phase = 'idle';
-    state.pickedTeam = null;
-    state.answerChosen = null;
-    state.buzzQueue = [];
-    state.chanced.clear();
+    state.responses.clear();
     for (const team of state.teams.values()) team.score = 0;
     // nova partida = nova ordem de perguntas
     shuffle(questions);
@@ -326,11 +526,9 @@ io.on('connection', (socket) => {
     if (!teamId) return;
     state.socketTeams.delete(socket.id);
     const team = state.teams.get(teamId);
-    if (!team) return;
-    if (state.pickedTeam === teamId && state.phase === 'answering') passFloorToNext();
-    state.buzzQueue = state.buzzQueue.filter((id) => id !== teamId);
+    if (team && team.socketId === socket.id) team.socketId = null;
+    // A equipe e sua resposta são mantidas; se voltar dentro do prazo, ainda pode responder.
     broadcast();
-    startGrace(team);
   });
 });
 

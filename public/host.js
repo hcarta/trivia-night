@@ -65,26 +65,13 @@ function esc(s) {
   return div.innerHTML;
 }
 
-let countdownInterval = null;
+// Diferença entre o relógio do servidor e o deste navegador, para os prazos.
+let clockOffset = 0;
+const serverNow = () => Date.now() + clockOffset;
 
-function startHostCountdown(answerEndsAt) {
-  clearHostCountdown();
-  if (!answerEndsAt) return;
-  function tick() {
-    const left = Math.max(0, Math.ceil((answerEndsAt - Date.now()) / 1000));
-    els.countdown.textContent = left + 's';
-    els.countdown.classList.toggle('urgent', left <= 3);
-    if (left <= 0) clearHostCountdown();
-  }
-  tick();
-  countdownInterval = setInterval(tick, 200);
-}
-
-function clearHostCountdown() {
-  clearInterval(countdownInterval);
-  countdownInterval = null;
-  els.countdown.textContent = '';
-}
+let tickInterval = null;
+let lastGame = null;
+let resultsShownFor = false;
 
 function renderRanking(teams) {
   const sorted = [...teams].sort((a, b) => b.score - a.score);
@@ -99,69 +86,177 @@ function renderRanking(teams) {
     .join('');
 }
 
+function removeBtn(t) {
+  return `<button class="remove-team" data-team="${esc(t.id)}" data-name="${esc(t.name)}" title="Remover equipe" aria-label="Remover ${esc(t.name)}">×</button>`;
+}
+
+// Remover equipe (botão × no placar e na lista de boas-vindas).
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.remove-team');
+  if (!btn) return;
+  if (confirm(`Remover a equipe "${btn.dataset.name}"?\nOs pontos dela serão perdidos.`)) {
+    socket.emit('host:removeTeam', btn.dataset.team);
+  }
+});
+
+function signed(n) {
+  return n > 0 ? `+${n}` : n < 0 ? `−${-n}` : '0';
+}
+
+// Lista de equipes que apertaram, na ordem.
+function renderResponses(game) {
+  const revealed = game.phase === 'revealed';
+  const now = serverNow();
+  let anyPending = false;
+  const html = game.responses
+    .map((r) => {
+      const t = game.teams.find((t) => t.id === r.teamId);
+      const name = esc(t ? t.name : 'Equipe');
+      let status;
+      let cls = 'resp-item';
+      if (revealed) {
+        if (r.answer == null) {
+          status = 'sem resposta';
+          cls += ' none';
+        } else {
+          const right = r.answer === game.question.correct;
+          cls += right ? ' ok' : ' no';
+          status = `${LETTERS[r.answer]} · ${signed(r.delta)}`;
+        }
+      } else if (r.answered) {
+        status = 'respondeu ✓';
+        cls += ' done';
+      } else {
+        const left = Math.ceil((r.deadline - now) / 1000);
+        if (left > 0) {
+          anyPending = true;
+          status = `${left}s`;
+          cls += left <= 3 ? ' urgent' : ' waiting';
+        } else {
+          status = 'tempo esgotado';
+          cls += ' none';
+        }
+      }
+      return `<div class="${cls}">
+        <span class="resp-pos">${r.position + 1}º</span>
+        <span class="resp-name">${name}${t && !t.online ? ' <span class="offline-tag">desconectada</span>' : ''}${
+          revealed ? '' : `<span class="resp-pts">vale ${r.points} pts</span>`
+        }</span>
+        <span class="resp-status">${status}</span>
+      </div>`;
+    })
+    .join('');
+  els.buzzQueue.innerHTML = html;
+  return anyPending;
+}
+
+function renderStatus(game) {
+  if (game.phase === 'buzzing') {
+    const n = game.responses.length;
+    const answered = game.responses.filter((r) => r.answered).length;
+    const parts = [];
+    parts.push(`Vagas: <strong>${n}</strong> de ${game.maxBuzzers} preenchida${n === 1 ? '' : 's'}`);
+    if (n) parts.push(`<strong>${answered}</strong> de ${n} já respondeu${answered === 1 ? '' : 'ram'}`);
+    if (game.autoRevealing) parts.push('<strong>Todos responderam — revelando…</strong>');
+    else if (game.slotsLeft) parts.push(`Próxima a apertar vale <strong>${game.nextPoints}</strong> pts`);
+    else parts.push('Vagas esgotadas');
+    els.status.innerHTML = parts.map((p) => `<div class="hint">${p}</div>`).join('');
+  } else if (game.phase === 'revealed') {
+    const hits = game.responses.filter((r) => r.answer === game.question.correct).length;
+    els.status.innerHTML = `<div class="hint">${hits} acerto${hits === 1 ? '' : 's'} de ${game.responses.length} que apertaram</div>`;
+  } else if (game.phase === 'finished') {
+    els.status.innerHTML = '<div class="hint">Todas as perguntas respondidas!</div>';
+  } else {
+    els.status.innerHTML = '<div class="hint">Aguardando iniciar</div>';
+  }
+}
+
+// Atualiza só os contadores, sem esperar por uma nova mensagem do servidor.
+function tick() {
+  if (!lastGame || lastGame.phase !== 'buzzing') return;
+  if (!renderResponses(lastGame)) stopTick();
+}
+function startTick() {
+  if (!tickInterval) tickInterval = setInterval(tick, 250);
+}
+function stopTick() {
+  clearInterval(tickInterval);
+  tickInterval = null;
+}
+
 function render(game) {
+  lastGame = game;
+  clockOffset = game.serverNow - Date.now();
   const isWelcome = game.questionIndex === -1;
   els.welcome.classList.toggle('hidden', !isWelcome);
   els.grid.classList.toggle('hidden', isWelcome);
 
   const sorted = [...game.teams].sort((a, b) => b.score - a.score);
+  const buzzed = new Set(game.responses.map((r) => r.teamId));
   els.scoreboard.innerHTML = sorted.length
     ? sorted
         .map(
           (t, i) => `
-          <div class="team-chip ${game.pickedTeam === t.id ? 'picked' : ''} ${t.online ? '' : 'offline'}">
+          <div class="team-chip ${game.phase === 'buzzing' && buzzed.has(t.id) ? 'picked' : ''} ${t.online ? '' : 'offline'}">
             <span class="rank">${i + 1}</span>
             <span class="tname">${esc(t.name)}</span>
             <span class="tscore">${t.score}</span>
             ${t.online ? '' : '<span class="offline-tag">desconectada</span>'}
+            ${removeBtn(t)}
           </div>`
         )
         .join('')
     : '<div class="hint">Aguardando equipes se juntarem…</div>';
 
   if (isWelcome) {
+    stopTick();
     els.welcomeTeams.innerHTML = game.teams.length
       ? game.teams
           .map(
             (t) =>
-              `<div class="team-line ${t.online ? '' : 'offline'}">${esc(t.name)}${t.online ? '' : ' <span class="offline-tag">desconectada</span>'}</div>`
+              `<div class="team-line ${t.online ? '' : 'offline'}">${esc(t.name)}${t.online ? '' : ' <span class="offline-tag">desconectada</span>'}${removeBtn(t)}</div>`
           )
           .join('')
       : '<div class="hint">Aguardando equipes — escaneie o QR code para participar</div>';
-    els.startBtn.textContent = game.teams.length
+    els.welcomeStartBtn.textContent = game.teams.length
       ? `Iniciar Jogo (${game.teams.length} equipe${game.teams.length > 1 ? 's' : ''})`
       : 'Iniciar Jogo';
+    els.welcomeStartBtn.disabled = game.questionCount === 0;
     return;
   }
 
   const { question } = game;
-  const picked = game.teams.find((t) => t.id === game.pickedTeam);
 
-  els.progress.textContent =
-    game.questionIndex >= 0
-      ? `Pergunta ${game.questionIndex + 1} / ${game.questionCount}`
-      : '';
+  els.progress.textContent = `Pergunta ${Math.min(game.questionIndex + 1, game.questionCount)} / ${game.questionCount}`;
+  els.countdown.classList.add('hidden');
 
-  if (!question) {
-    els.question.textContent = 'Pressione "Próxima Pergunta" para começar';
+  if (!question || game.phase === 'finished') {
+    stopTick();
+    els.phase.textContent = PHASE_LABELS.finished;
+    els.question.textContent = game.phase === 'finished' ? 'Fim de jogo!' : 'Pressione "Próxima Pergunta" para começar';
     els.qimg.classList.add('hidden');
     els.answers.innerHTML = '';
     els.reveal.classList.add('hidden');
-    els.status.innerHTML = '<div class="hint">Aguardando iniciar</div>';
     els.buzzQueue.innerHTML = '';
-    clearHostCountdown();
-    els.countdown.classList.add('hidden');
+    renderStatus(game);
     els.confirmBtn.classList.add('hidden');
-    els.resultsBtn.classList.add('hidden');
-    els.startBtn.classList.remove('hidden');
+    els.resultsBtn.classList.toggle('hidden', game.phase !== 'finished');
+    els.startBtn.classList.toggle('hidden', game.phase === 'finished');
     els.startBtn.textContent = 'Próxima Pergunta';
+    renderRanking(game.teams);
+    if (game.phase === 'finished' && !resultsShownFor) {
+      resultsShownFor = true;
+      els.resultsOverlay.classList.remove('hidden');
+    }
     return;
   }
+  resultsShownFor = false;
 
+  const revealed = game.phase === 'revealed';
   els.phase.textContent = `${(question.category || 'Geral').toUpperCase()} · ${PHASE_LABELS[game.phase] || String(game.phase).toUpperCase()}`;
   els.question.textContent = question.question;
   if (question.image) {
-    els.qimg.src = question.image;
+    if (els.qimg.getAttribute('src') !== question.image) els.qimg.src = question.image;
     els.qimg.classList.remove('hidden');
   } else {
     els.qimg.removeAttribute('src');
@@ -170,83 +265,51 @@ function render(game) {
 
   els.answers.innerHTML = question.answers
     .map((a, i) => {
+      if (!a) return '';
       let cls = 'answer-item';
-      if (game.phase === 'revealed') {
-        if (i === question.correct) cls += ' correct';
-        else if (i === game.answerChosen) cls += ' wrong';
-      } else if (i === game.answerChosen) {
-        cls += ' chosen';
+      let count = '';
+      if (revealed) {
+        cls += i === question.correct ? ' correct' : ' faded';
+        const n = game.responses.filter((r) => r.answer === i).length;
+        if (n) count = `<span class="answer-count">${n} equipe${n === 1 ? '' : 's'}</span>`;
       }
-      return `<li class="${cls}"><span class="letter">${LETTERS[i]}</span><span>${esc(a)}</span></li>`;
+      return `<li class="${cls}"><span class="letter">${LETTERS[i]}</span><span class="answer-text">${esc(a)}</span>${count}</li>`;
     })
     .join('');
 
-  if (game.phase === 'revealed') {
+  if (revealed) {
     els.reveal.classList.remove('hidden');
-    if (game.answerChosen != null) {
-      const right = game.answerChosen === question.correct;
-      els.reveal.innerHTML = `<strong>${esc(picked ? picked.name : 'Equipe')}</strong> escolheu <strong>${LETTERS[game.answerChosen]}</strong> — ${
-        right ? 'CORRETO! +100' : 'Resposta errada'
-      } · Correto: ${LETTERS[question.correct]}`;
-      els.reveal.className = 'reveal ' + (right ? 'ok-box' : 'no-box');
-    } else {
-      els.reveal.innerHTML = 'Nenhuma resposta foi dada.';
-      els.reveal.className = 'reveal';
-    }
+    els.reveal.className = 'reveal ok-box';
+    els.reveal.innerHTML = `Resposta correta: <strong>${LETTERS[question.correct]}</strong> — ${esc(question.answers[question.correct])}`;
   } else {
     els.reveal.classList.add('hidden');
   }
 
-  clearHostCountdown();
-  els.countdown.classList.toggle('hidden', game.phase !== 'answering');
-  if (game.phase === 'answering' && game.answerEndsAt && !game.answerChosen) {
-    startHostCountdown(game.answerEndsAt);
-  }
+  renderStatus(game);
+  if (renderResponses(game)) startTick();
+  else stopTick();
 
-  const pickedName = picked ? picked.name : 'Equipe';
-  if (game.phase === 'buzzing') {
-    els.status.innerHTML = '<div class="hint">Aguardando uma equipe apertar…</div>';
-    els.buzzQueue.innerHTML = '';
-  } else if (game.phase === 'answering') {
-    els.status.innerHTML = `<div class="hint"><strong>${esc(pickedName)}</strong> está respondendo…${
-      game.answerChosen != null ? ` escolheu ${LETTERS[game.answerChosen]}` : ''
-    }</div>`;
-    if (game.buzzQueue.length > 1) {
-      els.buzzQueue.innerHTML = game.buzzQueue
-        .slice(1)
-        .map((tid, i) => {
-          const t = game.teams.find((t) => t.id === tid);
-          return `<div class="queue-item">#${i + 2} — ${esc(t ? t.name : 'Equipe')}</div>`;
-        })
-        .join('');
-    } else {
-      els.buzzQueue.innerHTML = '';
-    }
-  } else if (game.phase === 'revealed') {
-    els.status.innerHTML = '<div class="hint">Resposta confirmada</div>';
-    els.buzzQueue.innerHTML = '';
-  } else if (game.phase === 'finished') {
-    els.status.innerHTML = '<div class="hint">Todas as perguntas respondidas!</div>';
-    els.buzzQueue.innerHTML = '';
-  } else {
-    els.status.innerHTML = '<div class="hint">Aguardando iniciar</div>';
-    els.buzzQueue.innerHTML = '';
-  }
-
-  els.confirmBtn.classList.toggle('hidden', game.phase !== 'answering');
-  els.resultsBtn.classList.toggle('hidden', game.phase !== 'finished');
+  els.confirmBtn.classList.toggle('hidden', game.phase !== 'buzzing');
+  els.resultsBtn.classList.add('hidden');
 
   const hasMore = game.questionIndex + 1 < game.questionCount;
-  if (game.phase === 'finished') {
-    els.startBtn.classList.add('hidden');
-  } else if (game.phase === 'answering') {
-    els.startBtn.classList.add('hidden');
-  } else {
-    els.startBtn.classList.remove('hidden');
-    els.startBtn.textContent = hasMore ? 'Próxima Pergunta' : 'Finalizar';
-  }
+  els.startBtn.classList.toggle('hidden', game.phase === 'buzzing');
+  els.startBtn.textContent = hasMore ? 'Próxima Pergunta' : 'Finalizar';
 
   renderRanking(game.teams);
 }
 
 socket.on('game', render);
+
+// Atalho do apresentador: Espaço/Enter aciona o botão principal visível.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== ' ' && e.key !== 'Enter') return;
+  if (e.target.closest('input, textarea, button') || !els.resultsOverlay.classList.contains('hidden')) return;
+  const btn = [els.welcomeStartBtn, els.confirmBtn, els.startBtn].find(
+    (b) => b.offsetParent !== null && !b.disabled
+  );
+  if (btn) {
+    e.preventDefault();
+    btn.click();
+  }
+});

@@ -17,6 +17,7 @@
       <h2>Entre no jogo</h2>
       <input id="join-name" type="text" placeholder="Nome da sua equipe" maxlength="30" autocomplete="off" autocapitalize="words">
       <button id="join-btn" class="big">Entrar</button>
+      <div id="join-error" class="join-error" role="alert"></div>
     </section>
 
     <section id="screen-waiting" class="screen">
@@ -42,10 +43,12 @@
 
     <section id="screen-result" class="screen">
       <div id="result-text" class="result-text"></div>
+      <div id="result-sub" class="status-text"></div>
     </section>
 
     <section id="screen-finished" class="screen">
       <div class="result-text">Fim de jogo!</div>
+      <div id="finished-sub" class="status-text"></div>
     </section>
   </main>
 

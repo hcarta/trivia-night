@@ -809,3 +809,141 @@ body.phone {
   justify-content: center;
   padding: 1rem;
 }
+/* ---------- Respostas por ordem de apertar (apresentador) ---------- */
+
+.resp-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.6rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: 10px;
+  padding: 0.55rem 0.8rem;
+  font-weight: 700;
+}
+
+.resp-pos {
+  color: var(--accent-2);
+  font-weight: 900;
+  min-width: 2ch;
+}
+
+.resp-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resp-pts {
+  display: block;
+  color: var(--dim);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.resp-status {
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.resp-item.waiting { border-left-color: var(--accent-2); }
+.resp-item.urgent { border-left-color: var(--buzz); }
+.resp-item.urgent .resp-status { color: var(--buzz); }
+.resp-item.done { border-left-color: var(--accent); }
+.resp-item.none { border-left-color: var(--border); color: var(--dim); }
+.resp-item.ok { border-left-color: var(--ok); }
+.resp-item.ok .resp-status { color: var(--ok); }
+.resp-item.no { border-left-color: var(--no); }
+.resp-item.no .resp-status { color: var(--no); }
+
+.answer-item.faded {
+  opacity: 0.5;
+}
+
+.answer-text {
+  flex: 1;
+}
+
+.answer-count {
+  margin-left: auto;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+/* ---------- Telas do celular com subtítulo ---------- */
+
+#screen-result,
+#screen-finished,
+#screen-waiting {
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1rem;
+}
+
+/* Celular em retrato: uma alternativa por linha, para o texto não quebrar no meio das palavras. */
+@media (max-width: 560px) {
+  .answer-grid {
+    grid-template-columns: 1fr;
+    gap: 0.7rem;
+  }
+  .answer-btn {
+    min-height: clamp(60px, 11vh, 96px);
+  }
+}
+.answer-btn .btn-text {
+  word-break: normal;
+  overflow-wrap: anywhere;
+  hyphens: auto;
+}
+
+/* ---------- Remover equipe (apresentador) ---------- */
+
+.remove-team {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  margin-left: 0.3rem;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--dim);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, background 0.12s ease;
+}
+
+.team-chip:hover .remove-team,
+.team-line:hover .remove-team,
+.remove-team:focus-visible {
+  opacity: 1;
+}
+
+.remove-team:hover {
+  background: var(--no);
+  color: #fff;
+}
+
+@media (hover: none) {
+  .remove-team {
+    opacity: 0.6;
+  }
+}
+
+/* ---------- Erro ao entrar (celular) ---------- */
+
+.join-error {
+  min-height: 1.4em;
+  color: var(--no);
+  font-weight: 700;
+  text-align: center;
+}
