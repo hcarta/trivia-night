@@ -219,8 +219,9 @@ const ANSWER_SLACK_MS = 750;
 // Só as primeiras MAX_BUZZERS equipes podem apertar em cada pergunta; as demais ficam
 // de fora. Evita que alguém espere de propósito para pesquisar a resposta.
 const MAX_BUZZERS = Number(process.env.MAX_BUZZERS) || 5; // tolerância de rede para respostas no limite
-// Revela sozinho quando todas as equipes conectadas já responderam (ou esgotaram o tempo).
-const AUTO_REVEAL = true;
+// Revelar sozinho quando todos já responderam? Desligado: o resultado (certo/errado)
+// só aparece quando o apresentador aperta "Revelar Resposta".
+const AUTO_REVEAL = false;
 const AUTO_REVEAL_DELAY_MS = 1500;
 // Onde a partida é salva, para sobreviver a um reinício do servidor.
 const STATE_FILE = process.env.STATE_FILE || path.join(__dirname, 'game-state.json');
@@ -482,6 +483,7 @@ function basePayload() {
     maxBuzzers: MAX_BUZZERS,
     slotsLeft: Math.max(0, MAX_BUZZERS - state.responses.size),
     autoRevealing: !!autoRevealTimer,
+    everyoneDone: everyoneDone(),
     responses: responsesPayload(revealed),
     teams: publicTeams(),
     question: q

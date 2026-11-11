@@ -1008,3 +1008,78 @@ body.phone {
   color: var(--accent-2);
   text-align: center;
 }
+
+/* Botão "Revelar Resposta" chama atenção quando todos já responderam. */
+.big.amber.ready {
+  animation: pulse 1s ease-in-out infinite;
+  box-shadow: 0 0 0 4px rgba(255, 209, 102, 0.35);
+}
+
+/* ---------- Layout do celular: nada passa por cima do cabeçalho ---------- */
+/* Cada tela rola dentro do próprio espaço. A centralização vertical usa margens
+   automáticas (::before/::after), que somem quando o conteúdo não cabe — assim
+   o conteúdo começa logo abaixo do cabeçalho em vez de vazar para cima dele. */
+.phone .screen {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  justify-content: flex-start !important;
+}
+
+.phone .screen::before,
+.phone .screen::after {
+  content: '';
+  flex: 0 0 0;
+  margin: auto 0;
+}
+
+.phone .phone-top {
+  position: relative;
+  z-index: 2;
+  flex-shrink: 0;
+}
+
+#screen-answer {
+  gap: 0.8rem;
+  padding: 0.25rem 0 0.5rem;
+}
+
+#screen-answer .q-img.small {
+  max-height: 24vh;
+  flex-shrink: 0;
+}
+
+.answer-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.8rem;
+  flex-shrink: 0;
+}
+
+.answer-head .countdown {
+  font-size: 2.2rem;
+  min-height: 0;
+  min-width: 2ch;
+  line-height: 1;
+}
+
+.answer-head .status-text {
+  font-size: 1rem;
+  text-align: left;
+}
+
+#screen-answer .answer-grid {
+  flex-shrink: 0;
+}
+
+/* Telas baixas (ex.: iPhone SE): alternativas e imagem mais compactas. */
+@media (max-height: 700px) {
+  #screen-answer .q-img.small {
+    max-height: 20vh;
+  }
+  .answer-btn {
+    min-height: 52px;
+    padding: 0.55rem 0.8rem;
+  }
+}

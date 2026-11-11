@@ -126,7 +126,7 @@ function renderResponses(game) {
           status = `${LETTERS[r.answer]} · ${signed(r.delta)}`;
         }
       } else if (r.answered) {
-        status = 'respondeu ✓';
+        status = 'respondeu'; // sem ✓, para não parecer que acertou
         cls += ' done';
       } else {
         const left = Math.ceil((r.deadline - now) / 1000);
@@ -160,6 +160,7 @@ function renderStatus(game) {
     parts.push(`Vagas: <strong>${n}</strong> de ${game.maxBuzzers} preenchida${n === 1 ? '' : 's'}`);
     if (n) parts.push(`<strong>${answered}</strong> de ${n} já respondeu${answered === 1 ? '' : 'ram'}`);
     if (game.autoRevealing) parts.push('<strong>Todos responderam — revelando…</strong>');
+    else if (game.everyoneDone) parts.push('<strong>Todos responderam — aperte “Revelar Resposta”</strong>');
     else if (game.slotsLeft) parts.push(`Próxima a apertar vale <strong>${game.nextPoints}</strong> pts`);
     else parts.push('Vagas esgotadas');
     els.status.innerHTML = parts.map((p) => `<div class="hint">${p}</div>`).join('');
@@ -294,6 +295,7 @@ function render(game) {
   else stopTick();
 
   els.confirmBtn.classList.toggle('hidden', game.phase !== 'buzzing');
+  els.confirmBtn.classList.toggle('ready', game.phase === 'buzzing' && !!game.everyoneDone);
   els.resultsBtn.classList.add('hidden');
 
   const hasMore = game.questionIndex + 1 < game.questionCount;
